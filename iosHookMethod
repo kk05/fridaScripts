@@ -7,9 +7,11 @@ if(ObjC.available){
           onEnter: function(args){
             console.log("[*] Class Name: " + className);
             console.log("[*] Method Name: " + funcName);
+            console.log("[*] args"+ ObjC.Object(args).toString());
             },
             onLeave:function(retVal){
                console.log("[*] Return Value: " + retval);
+               //  console.log("[*] Return Value: " + + ObjC.Object(retval).toString() );
                }
                });
                } catch(err){

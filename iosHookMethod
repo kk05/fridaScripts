@@ -1,0 +1,22 @@
+if(ObjC.available){
+  try {
+        var className =""; // Enter ClassName 
+        var funcName = ""; // Enter FunctionName to Hook
+        var hook = eval('ObjC.classes.'+ className +'["'+ funcName +'"]' );
+        Interceptor.attach(hook.implementation,{
+          onEnter: function(args){
+            console.log("[*] Class Name: " + className);
+            console.log("[*] Method Name: " + funcName);
+            },
+            onLeave:function(retVal){
+               console.log("[*] Return Value: " + retval);
+               }
+               });
+               } catch(err){
+                   console.log("[!] Exception: " + err.message);
+                   }
+                   }
+                   else
+                   {
+                    console.log("Objc Is Not Available");
+                   }

@@ -1,0 +1,219 @@
+The first thing would be to show how to override a class method print the original value it would have and alter it and return True instead.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Java.perform(function(){
+
+	Java.use("com.Awesome.App.MainActivity").mySecurityCheck.implementation=function(x,y){
+		console.log("Original value: " + this.mySecurityCheck(x,y));
+		// Return the boolean True instead
+		return Java.use("java.lang.Boolean").$new(true);
+	}
+})
+What we are seeing in this snippet is the original implementation of the method mySecurityCheck being overridden with something arbitrary of our choice. In this case we chose to simply return the Boolean True.
+
+======================================================================================================================================================================================================
+Inspect the fields and methods of a class
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+const Class = Java.use("com.Awesome.App.MainActivity");
+function inspectClass(obj) {
+    const obj_class = Java.cast(obj.getClass(), Class);
+    const fields = obj_class.getDeclaredFields();
+    const methods = obj_class.getMethods();
+    console.log("Inspect " + obj.getClass().toString());
+    console.log("\tFields:");
+    for (var i in fields)
+        console.log("\t" + fields[i].toString());
+    console.log("\tMethods:");
+    for (var i in methods)
+        console.log("\t" + methods[i].toString());
+}
+I believe it is easy to understand the snippet above. It will get the class we give to it, in this case the MainActivity and move on to print all the fields and methods it can find.
+
+
+======================================================================================================================================================================================================
+Reveal native methods
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+var RevealNativeMethods = function() {
+  var pSize = Process.pointerSize;
+  var env = Java.vm.getEnv();
+  var RegisterNatives = 215, FindClassIndex = 6; // search "215" @ https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/functions.html
+  var jclassAddress2NameMap = {};
+  function getNativeAddress(idx) {
+    return env.handle.readPointer().add(idx * pSize).readPointer();
+  }
+  // intercepting FindClass to populate Map<address, jclass>
+  Interceptor.attach(getNativeAddress(FindClassIndex), {
+    onEnter: function(args) {
+      jclassAddress2NameMap[args[0]] = args[1].readCString();
+    }
+  });
+  // RegisterNative(jClass*, .., JNINativeMethod *methods[nMethods], uint nMethods) // https://android.googlesource.com/platform/libnativehelper/+/master/include_jni/jni.h#977
+  Interceptor.attach(getNativeAddress(RegisterNatives), {
+    onEnter: function(args) {
+      for (var i = 0, nMethods = parseInt(args[3]); i < nMethods; i++) {
+        /*
+          https://android.googlesource.com/platform/libnativehelper/+/master/include_jni/jni.h#129
+          typedef struct {
+             const char* name;
+             const char* signature;
+             void* fnPtr;
+          } JNINativeMethod;
+        */
+        var structSize = pSize * 3; // = sizeof(JNINativeMethod)
+        var methodsPtr = ptr(args[2]);
+        var signature = methodsPtr.add(i * structSize + pSize).readPointer();
+        var fnPtr = methodsPtr.add(i * structSize + (pSize * 2)).readPointer(); // void* fnPtr
+        var jClass = jclassAddress2NameMap[args[0]].split('/');
+        console.log('\x1b[3' + '6;01' + 'm', JSON.stringify({
+          module: DebugSymbol.fromAddress(fnPtr)['moduleName'], // https://www.frida.re/docs/javascript-api/#debugsymbol
+          package: jClass.slice(0, -1).join('.'),
+          class: jClass[jClass.length - 1],
+          method: methodsPtr.readPointer().readCString(), // char* name
+          signature: signature.readCString(), // char* signature TODO Java bytecode signature parser { Z: 'boolean', B: 'byte', C: 'char', S: 'short', I: 'int', J: 'long', F: 'float', D: 'double', L: 'fully-qualified-class;', '[': 'array' } https://github.com/skylot/jadx/blob/master/jadx-core/src/main/java/jadx/core/dex/nodes/parser/SignatureParser.java
+          address: fnPtr
+        }), '\x1b[39;49;00m');
+      }
+    }
+  });
+}
+
+Java.perform(RevealNativeMethods);
+You can see more about this snippet on this stackoverflow question!
+
+
+======================================================================================================================================================================================================
+Enumerating Native library
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Module.enumerateExports("mylib.so", {
+    onMatch: function(e) {
+        if (e.type == 'function') {
+            console.log("name of function = " + e.name);
+
+            if (e.name == "Java_example_decrypt") {
+                console.log("Function Decrypt recognized by name");
+                Interceptor.attach(e.address, {
+                    onEnter: function(args) {
+                        console.log("Interceptor attached onEnter...");
+                    },
+                    onLeave: function(retval) {
+                        console.log("Interceptor attached onLeave...");
+                    }
+                });
+            }
+        }
+    },
+    onComplete: function() {}
+});
+
+
+
+======================================================================================================================================================================================================
+Modify return value from inside a native function
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Interceptor.attach(Module.getExportByName('libnative-lib.so', 'Jniint'), {
+    onEnter: function(args) {
+      this.first = args[0].toInt32(); // int
+      console.log("on enter with: " + this.first)
+    },
+    onLeave: function(retval) {
+      const dstAddr = Java.vm.getEnv().newIntArray(1117878);
+      console.log("dstAddr is : " + dstAddr.toInt32())
+      retval.replace(dstAddr);
+    }
+});
+
+
+
+======================================================================================================================================================================================================
+Using findExportByName if we know on the method we want to hook
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Interceptor.attach(Module.findExportByName(null, "fopen"), {
+    onEnter: function(args) {
+        console.log("Interceptor attached onEnter...");
+    },
+    onLeave: function(args) {
+        console.log("Interceptor attached onLeave...");
+    }
+}
+The null argument tells frida to look through the exports of all of the loaded libraries.
+
+
+======================================================================================================================================================================================================
+Enumerate all the modules in order to find the export you are looking for
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Process.enumerateModules()
+    .filter(function(m) {
+        return m["path"].toLowerCase().indexOf("libnative") != -1;
+    })
+    .forEach(function(mod) {
+        console.log(JSON.stringify(mod));
+        mod.enumerateExports().forEach(function(exp) {
+            if (exp.name.indexOf("fopen") != -1) {
+                console.log("fopen found!");
+            }
+        })
+    });
+
+
+
+======================================================================================================================================================================================================
+Hook JNI by address
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Running nm --demangle --dynamic mylib.so might be helpful in order to find the correct method address to use.
+
+var moduleName = "mylib.so"; 
+var nativeFuncAddr = 0x1111;
+
+Interceptor.attach(Module.findExportByName(null, "fopen"), {
+    onEnter: function(args) {
+        this.lib = Memory.readUtf8String(args[0]);
+        console.log("fopen ==> " + this.lib);
+    },
+    onLeave: function(retval) {
+        if (this.lib.endsWith(moduleName)) {
+            console.log(retval);
+            var baseAddr = Module.findBaseAddress(moduleName);
+            Interceptor.attach(baseAddr.add(nativeFuncAddr), {
+                onEnter: function(args) {
+                    console.log("hook invoked");
+                    console.log(JSON.stringify({
+                        a1: args[1].toInt32(),
+                        a2: Memory.readUtf8String(Memory.readPointer(args[2])),
+                        a3: Boolean(args[3])
+                    }, null, '\t'));
+                }
+            });
+        }
+    }
+});
+
+
+
+======================================================================================================================================================================================================
+Enumerate classes and filter them with includes
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Java.perform(function() {
+    Java.enumerateLoadedClasses({
+        "onMatch": function(c) {
+            if (c.includes("erev0s")) {
+                console.log(c);
+            }
+        },
+        onComplete: function() {}
+    });
+});
+
+
+
+======================================================================================================================================================================================================
+Hook setText and change the content
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Java.perform(function() {
+    var textViewClass = Java.use("android.widget.TextView");
+    // Lets overload the setText here
+    textViewClass.setText.overload("java.lang.CharSequence").implementation = function(x) {
+        var string = Java.use('java.lang.String');
+        return this.setText(string.$new("erev0s.com is CHANGED"));
+    }
+});

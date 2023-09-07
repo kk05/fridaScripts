@@ -1,0 +1,44 @@
+// Define the package name and class name for the target Android app
+const targetPackageName = 'com.example.targetapp';
+const systemPropertiesClass = 'android.os.SystemProperties';
+
+// Hook the 'get' method of SystemProperties
+Interceptor.attach(Module.findExportByName(null, 'property_get'), {
+  onEnter: function (args) {
+    const propName = Memory.readCString(args[0]);
+    if (propName.startsWith('your_property_prefix')) {
+      console.log('System property read - Property Name:', propName);
+      // You can add custom handling here if needed
+    }
+  },
+});
+
+// Hook the 'set' method of SystemProperties
+const systemPropertiesSetMethod = Module.findExportByName(null, '_ZN7android16SystemProperties3setEPKcS2_');
+Interceptor.attach(systemPropertiesSetMethod, {
+  onEnter: function (args) {
+    const propName = Memory.readCString(args[0]);
+    const propValue = Memory.readCString(args[1]);
+    if (propName.startsWith('your_property_prefix')) {
+      console.log('System property set - Property Name:', propName, 'Value:', propValue);
+      // You can add custom handling here if needed
+    }
+  },
+});
+
+// Attach to the target process
+function attachToTarget() {
+  const targetProcess = Process.findModuleByName(targetPackageName);
+  if (targetProcess) {
+    console.log('Attaching to', targetPackageName);
+    const targetContext = Process.getModuleByName(targetPackageName).base;
+    if (targetContext) {
+      console.log('Target context:', targetContext);
+      Module.ensureInitialized(systemPropertiesClass);
+    }
+  } else {
+    console.error('Target package not found:', targetPackageName);
+  }
+}
+
+setImmediate(attachToTarget);
